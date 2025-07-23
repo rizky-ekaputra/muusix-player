@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Spacey Music Player</title>
+  <script src="https://unpkg.com/vue@3.4.15/dist/vue.global.prod.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron&display=swap" rel="stylesheet">
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      overflow: hidden;
+      font-family: 'Orbitron', sans-serif;
+      color: #ffffff;
+    }
+
+    #star-canvas {
+      position: fixed;
+      top: 0;
+      left: 0;
+      z-index: -2;
+      width: 100vw;
+      height: 100vh;
+      background: url('https://images.unsplash.com/photo-1475274047050-1d0c0975c63e?q=80&w=872&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D') no-repeat center center fixed;
+      background-size: cover;
+    }
+
+    #visualizer {
+      position: fixed;
+      top: 0;
+      left: 0;
+      z-index: -1;
+      width: 100vw;
+      height: 100vh;
+      pointer-events: none;
+    }
+
+    body {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      flex-direction: column;
+    }
+
+    .title {
+      text-align: center;
+      font-size: 2em;
+      margin-bottom: 20px;
+      background: linear-gradient(to right, #ffa07a, #ff69b4);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      text-shadow: 0 0 2px rgba(0, 0, 0, 0.3);
+    }
+
+    .player {
+      background: rgba(0, 0, 0, 0.5);
+      padding: 20px;
+      border-radius: 15px;
+      backdrop-filter: blur(5px);
+      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+      width: 300px;
+    }
+
+    .track-list {
+      list-style: none;
+      padding: 0;
+      margin: 0 0 15px 0;
+    }
+
+    .track-list li {
+      padding: 10px;
+      margin: 4px 0;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: 0.2s ease;
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .track-list li:hover,
+    .track-list li.active {
+      background: linear-gradient(to right, #ff9a8b, #ff6a88);
+      color: #fff;
+    }
+
+    .controls {
+      display: flex;
+      justify-content: center;
+      margin-top: 10px;
+    }
+
+    .gradient-button {
+      background: linear-gradient(to right, #ff9a8b, #ff6a88);
+      border: none;
+      color: white;
+      padding: 10px 24px;
+      border-radius: 30px;
+      font-size: 1em;
+      cursor: pointer;
+      transition: transform 0.2s ease, box-shadow 0.3s ease;
+    }
+
+    .gradient-button:hover {
+      transform: scale(1.05);
+      box-shadow: 0 4px 15px rgba(255, 106, 136, 0.4);
+    }
+
+    .progress-container {
+      height: 6px;
+      background: rgba(255, 255, 255, 0.2);
+      border-radius: 4px;
+      overflow: hidden;
+      margin-top: 15px;
+      cursor: pointer;
+    }
+
+    .progress-bar {
+      height: 100%;
+      background: linear-gradient(to right, #ff9a8b, #ff6a88);
+      transition: width 0.1s linear;
+    }
+
+    .signature {
+      position: fixed;
+      bottom: 10px;
+      right: 15px;
+      font-size: 0.8em;
+      color: rgba(255, 255, 255, 0.7);
+      pointer-events: none;
+    }
+
+    audio {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="star-canvas"></canvas>
+  <canvas id="visualizer"></canvas>
+
+  <div id="app">
+    <h1 class="title">Muusix</h1>
+
+    <div class="player">
+      <ul class="track-list">
+        <li v-for="(track, index) in tracks"
+            :key="index"
+            :class="{ active: currentTrackIndex === index }"
+            @click="selectTrack(index)">
+          {{ track.title }}
+        </li>
+      </ul>
+
+      <div class="progress-container" @click="seek($event)">
+        <div class="progress-bar" :style="{ width: progress + '%' }"></div>
+      </div>
+
+      <div class="controls">
+        <button @click="togglePlay" class="gradient-button">
+          {{ isPlaying ? '⏸ Pause' : '▶️ Play' }}
+        </button>
+      </div>
+    </div>
+
+    <audio ref="audio" :src="currentTrack.src" @timeupdate="updateProgress" @ended="nextTrack"></audio>
+  </div>
+
+  <div class="signature">developed with love by Rizky Ekaputra</div>
+
+  <script>
+    const { createApp, ref, computed } = Vue;
+
+    createApp({
+      setup() {
+        const tracks = [
+          { title: "Space Ambience – Alexander Nakarada", src: "https://cdn.pixabay.com/download/audio/2022/10/03/audio_bfd35ec89e.mp3" },
+          { title: "Deep Space – LesFM", src: "https://cdn.pixabay.com/download/audio/2023/03/28/audio_6f94856eb7.mp3" },
+          { title: "Ambient Galaxy – QubeSounds", src: "https://cdn.pixabay.com/download/audio/2022/03/30/audio_0f6d5a2df9.mp3" }
+        ];
+
+        const currentTrackIndex = ref(0);
+        const isPlaying = ref(false);
+        const audio = ref(null);
+        const progress = ref(0);
+        let ctx, analyser, source, dataArray, bufferLength;
+
+        const currentTrack = computed(() => tracks[currentTrackIndex.value]);
+
+        const togglePlay = () => {
+          if (!audio.value) return;
+          isPlaying.value = !isPlaying.value;
+          isPlaying.value ? audio.value.play() : audio.value.pause();
+        };
+
+        const selectTrack = (index) => {
+          if (index === currentTrackIndex.value) return;
+          isPlaying.value = false;
+          currentTrackIndex.value = index;
+          audio.value.load();
+          setTimeout(() => togglePlay(), 200);
+        };
+
+        const nextTrack = () => {
+          currentTrackIndex.value = (currentTrackIndex.value + 1) % tracks.length;
+          audio.value.load();
+          setTimeout(() => togglePlay(), 200);
+        };
+
+        const updateProgress = () => {
+          if (!audio.value.duration) return;
+          progress.value = (audio.value.currentTime / audio.value.duration) * 100;
+        };
+
+        const seek = (e) => {
+          const rect = e.target.getBoundingClientRect();
+          const percent = (e.clientX - rect.left) / rect.width;
+          audio.value.currentTime = percent * audio.value.duration;
+        };
+
+        const setupVisualizer = () => {
+          const audioCtx = new AudioContext();
+          analyser = audioCtx.createAnalyser();
+          source = audioCtx.createMediaElementSource(audio.value);
+          source.connect(analyser);
+          analyser.connect(audioCtx.destination);
+          analyser.fftSize = 64;
+          bufferLength = analyser.frequencyBinCount;
+          dataArray = new Uint8Array(bufferLength);
+
+          const canvas = document.getElementById("visualizer");
+          ctx = canvas.getContext("2d");
+          canvas.width = window.innerWidth;
+          canvas.height = window.innerHeight;
+
+          function draw() {
+            requestAnimationFrame(draw);
+            analyser.getByteFrequencyData(dataArray);
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            const barWidth = (canvas.width / bufferLength) * 2.5;
+            let x = 0;
+
+            for (let i = 0; i < bufferLength; i++) {
+              const barHeight = dataArray[i];
+              const hue = 330 - (barHeight / 255) * 120;
+              ctx.fillStyle = `hsl(${hue}, 70%, 70%)`;
+              ctx.fillRect(x, canvas.height - barHeight, barWidth, barHeight);
+              x += barWidth + 1;
+            }
+          }
+
+          draw();
+        };
+
+        setTimeout(() => {
+          setupVisualizer();
+        }, 500);
+
+        return {
+          tracks,
+          currentTrackIndex,
+          currentTrack,
+          isPlaying,
+          audio,
+          togglePlay,
+          selectTrack,
+          nextTrack,
+          progress,
+          updateProgress,
+          seek
+        };
+      }
+    }).mount("#app");
+  </script>
+
+  <!-- Starry BG Animation -->
+  <script>
+    const canvas = document.getElementById("star-canvas");
+    const ctx = canvas.getContext("2d");
+    let stars = [];
+
+    function resizeCanvas() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+      createStars();
+    }
+
+    function createStars() {
+      stars = [];
+      for (let i = 0; i < 150; i++) {
+        stars.push({
+          x: Math.random() * canvas.width,
+          y: Math.random() * canvas.height,
+          radius: Math.random() * 1.5 + 0.5,
+          alpha: Math.random(),
+          delta: Math.random() * 0.02 + 0.005
+        });
+      }
+    }
+
+    function animateStars() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      for (let star of stars) {
+        ctx.beginPath();
+        ctx.arc(star.x, star.y, star.radius, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255, 255, 255, ${star.alpha})`;
+        ctx.fill();
+        star.alpha += star.delta;
+        if (star.alpha <= 0 || star.alpha >= 1) star.delta *= -1;
+      }
+      requestAnimationFrame(animateStars);
+    }
+
+    window.addEventListener("resize", resizeCanvas);
+    resizeCanvas();
+    animateStars();
+  </script>
+</body>
+</html>
